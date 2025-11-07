@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Melanchall.DryWetMidi.Core;
 
 namespace Vivace.Services;
@@ -7,6 +9,60 @@ namespace Vivace.Services;
 // service class responsible for detecting MIDI specification standards (GM, GM2, XG, GS)
 public class MidiSpecificationDetector
 {
+    private bool _enableLogging = true;
+
+    public void SetLogging(bool enable)
+    {
+        _enableLogging = enable;
+    }
+
+    private void LogSilent(string message)
+    {
+        if (_enableLogging)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"  [SysEx] {message}");
+            Console.ResetColor();
+        }
+    }
+
+    private void LogDetection(string method, string details)
+    {
+        if (_enableLogging)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($">>> DETECTED: {method}");
+            Console.ForegroundColor = ConsoleColor.White;
+            Console.WriteLine($"    {details}");
+            Console.ResetColor();
+        }
+    }
+
+    private void LogFinalDecision(bool hasGM1, bool hasGM2, bool hasXG, bool hasGS, string result)
+    {
+        if (_enableLogging)
+        {
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("=== FINAL DECISION LOGIC ===");
+            Console.ResetColor();
+            Console.WriteLine($"Flags: GM1={hasGM1}, GM2={hasGM2}, XG={hasXG}, GS={hasGS}");
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"Result: {result}");
+            Console.ResetColor();
+            Console.WriteLine();
+        }
+    }
+
+    private string BytesToHex(byte[] data)
+    {
+        var sb = new StringBuilder();
+        foreach (var b in data)
+        {
+            sb.Append($"{b:X2} ");
+        }
+        return sb.ToString().TrimEnd();
+    }
     // WIP
     // unrepetant MIDI specification format detector
     // still not happy with it
@@ -18,9 +74,21 @@ public class MidiSpecificationDetector
         bool hasXG = false;
         bool hasGS = false;
 
+        if (_enableLogging)
+        {
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.WriteLine("=== Starting MIDI Specification Detection ===");
+            Console.ResetColor();
+            Console.WriteLine();
+        }
+
         // reassemble and analyze all SysEx messages in raw data
         foreach (var sysExData in EnumerateFullSysExMessages(midiFile))
         {
+            // log every SysEx message found (silent logging)
+            LogSilent($"Found SysEx: {BytesToHex(sysExData)}");
+
             // checking for explicit markers and usage patterns
             // specifically looking for any attempt from the MIDI file to communicate with a MIDI device
             // these attempts should contain manufacturer-specific data indicating GM/GM2 or XG/GS modes
@@ -29,59 +97,71 @@ public class MidiSpecificationDetector
             if (IsGM1SystemOn(sysExData))
             {
                 hasGM1 = true;
+                LogDetection("GM1 System On", $"Bytes: {BytesToHex(sysExData)}");
             }
 
             if (IsGM2SystemOn(sysExData))
             {
                 hasGM2 = true; // GM2 takes precedence over GM1
+                LogDetection("GM2 System On", $"Bytes: {BytesToHex(sysExData)}");
             }
 
             if (IsXGSystemOnOrReset(sysExData))
             {
                 hasXG = true;
+                LogDetection("Yamaha XG System On/Reset", $"Bytes: {BytesToHex(sysExData)}");
             }
 
             if (IsXGParameterChange(sysExData))
             {
                 hasXG = true; // usage-based detection
+                LogDetection("Yamaha XG Parameter Change", $"Bytes: {BytesToHex(sysExData)}");
             }
 
             if (IsGSReset(sysExData))
             {
                 hasGS = true;
+                LogDetection("Roland GS Reset", $"Bytes: {BytesToHex(sysExData)}");
             }
 
             if (IsGSDT1Message(sysExData))
             {
                 hasGS = true; // usage-based detection
+                LogDetection("Roland GS DT1 Message", $"Bytes: {BytesToHex(sysExData)}");
             }
         }
 
         // apply precedence rules
         // GM2 > GM1, vendor formats (XG/GS) noted with GM compatibility
+        string result;
         if (hasXG && hasGS)
         {
-            return "XG/GS Mixed (GM-compatible)"; // rare but possible
-                                                  // probably should not bet on this now that I think abt it
+            result = "XG/GS Mixed (GM-compatible)"; // rare but possible
+                                                     // probably should not bet on this now that I think abt it
         }
-        if (hasXG)
+        else if (hasXG)
         {
-            return hasGM2 ? "Yamaha XG (GM2-compatible)" : "Yamaha XG (GM-compatible)";
+            result = hasGM2 ? "Yamaha XG (GM2-compatible)" : "Yamaha XG (GM-compatible)";
         }
-        if (hasGS)
+        else if (hasGS)
         {
-            return hasGM2 ? "Roland GS (GM2-compatible)" : "Roland GS (GM-compatible)";
+            result = hasGM2 ? "Roland GS (GM2-compatible)" : "Roland GS (GM-compatible)";
         }
-        if (hasGM2)
+        else if (hasGM2)
         {
-            return "General MIDI Level 2 (GM2)";
+            result = "General MIDI Level 2 (GM2)";
         }
-        if (hasGM1)
+        else if (hasGM1)
         {
-            return "General MIDI (GM)";
+            result = "General MIDI (GM)";
+        }
+        else
+        {
+            result = "Unknown Format MIDI";
         }
 
-        return "Unknown Format MIDI";
+        LogFinalDecision(hasGM1, hasGM2, hasXG, hasGS, result);
+        return result;
     }
 
     // enumerate all SysEx messages from a MIDI file, properly reassembling
